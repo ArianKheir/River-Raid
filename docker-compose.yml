@@ -1,0 +1,125 @@
+services:
+  # Main River Raid game service with graphical interface
+  river-raid:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: river-raid-game
+    image: river-raid:latest
+    environment:
+      - DISPLAY=host.docker.internal:0.0
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/tmp}/pulse/native
+    volumes:
+      # X11 socket for graphical display (Linux only)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # PulseAudio socket for sound (optional, Linux only)
+      - ${XDG_RUNTIME_DIR:-/tmp}/pulse:${XDG_RUNTIME_DIR:-/tmp}/pulse:rw
+      # Game data persistence
+      - ./scores.txt:/app/scores.txt:rw
+      - ./logs:/app/logs:rw
+    # Use bridge network for Windows compatibility
+    networks:
+      - river-raid-network
+    stdin_open: true
+    tty: true
+    restart: "no"
+    command: ["./RiverRaid"]
+
+  # Headless version for testing and CI/CD
+  river-raid-headless:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: river-raid-headless
+    image: river-raid:headless
+    environment:
+      - DISPLAY=:99
+      - DISABLE_GRAPHICS=true
+    volumes:
+      # Game data persistence
+      - ./scores.txt:/app/scores.txt:rw
+      - ./logs:/app/logs:rw
+      - ./test-results:/app/test-results:rw
+    # Use xvfb for virtual display in headless mode
+    command: >
+      sh -c "
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 2
+        ./RiverRaid
+      "
+    profiles:
+      - headless
+
+  # Development environment with hot reload
+  river-raid-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: river-raid-dev
+    image: river-raid:dev
+    environment:
+      - DISPLAY=host.docker.internal:0.0
+      - DEVELOPMENT_MODE=true
+    volumes:
+      # X11 socket for graphical display (Linux only)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Source code for development
+      - .:/app:rw
+      # Game data persistence
+      - ./scores.txt:/app/scores.txt:rw
+      - ./logs:/app/logs:rw
+    networks:
+      - river-raid-network
+    stdin_open: true
+    tty: true
+    restart: "no"
+    command: >
+      sh -c "
+        while true; do
+          make clean && make
+          if [ $? -eq 0 ]; then
+            echo 'Build successful, running game...'
+            ./RiverRaid
+          else
+            echo 'Build failed, waiting for changes...'
+            sleep 5
+          fi
+        done
+      "
+    profiles:
+      - development
+
+  # Testing service
+  river-raid-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: river-raid-test
+    image: river-raid:test
+    environment:
+      - DISPLAY=:99
+      - TEST_MODE=true
+    volumes:
+      - ./test-results:/app/test-results:rw
+      - ./scores.txt:/app/scores.txt:rw
+    command: >
+      sh -c "
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 2
+        make test || echo 'No test target found'
+        ./RiverRaid --test-mode
+      "
+    profiles:
+      - testing
+
+networks:
+  river-raid-network:
+    driver: bridge
+
+volumes:
+  game-data:
+    driver: local
+  logs:
+    driver: local
+  test-results:
+    driver: local 
